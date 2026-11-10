@@ -1,13 +1,14 @@
-#include <iostream>
+#include <cstdint>
 #include <fstream>
 #include <string>
 #include <vector>
-#include <unordered_map>
-#include <vector>
+
+namespace
+{
 
 class LeaderByte
 {
-private:
+public:
     enum LEADER_BYTE_TYPE
     {
         ONE_BYTE = 1,
@@ -16,7 +17,45 @@ private:
         FOUR_BYTE,
         INVALID
     };
+    struct LeaderByteInfo
+    {
+        bool isValid;
+        int numberOfFollowers;
+        uint8_t rawByte;
+        LEADER_BYTE_TYPE type;
+    };
+    LeaderByteInfo processLeaderByte(uint8_t byte)
+    {
+        LeaderByteInfo info{false, 0, 0X00, LEADER_BYTE_TYPE::INVALID};
+        LEADER_BYTE_TYPE type = getLeaderByteType(byte);
+        if (type == LEADER_BYTE_TYPE::INVALID)
+        {
+            return info;
+        }
+        int numberOfFollowers = getNumberOfFollowersLeaderByte(type);
+        info = {true, numberOfFollowers, byte, type};
+        return info;
+    }
 
+    static uint8_t extractLeaderByteDataBits(uint8_t byte, LEADER_BYTE_TYPE type)
+    {
+        switch (type)
+        {
+        case LEADER_BYTE_TYPE::ONE_BYTE:
+            return extractOneByteLeaderDataBits(byte);
+        case LEADER_BYTE_TYPE::TWO_BYTE:
+            return extractTwoByteLeaderDataBits(byte);
+        case LEADER_BYTE_TYPE::THREE_BYTE:
+            return extractThreeByteLeaderDataBits(byte);
+        case LEADER_BYTE_TYPE::FOUR_BYTE:
+            return extractFourByteLeaderDataBits(byte);
+        case LEADER_BYTE_TYPE::INVALID:
+            break;
+        }
+        return 0;
+    }
+
+private:
     bool isOneByteLeader(uint8_t byte)
     {
         uint8_t mask = 0x80;
@@ -49,7 +88,7 @@ private:
         return (byte & mask) == pattern;
     }
 
-    LEADER_BYTE_TYPE getLeaderByteType(uint8_t &byte)
+    LEADER_BYTE_TYPE getLeaderByteType(uint8_t byte)
     {
         if (isOneByteLeader(byte))
         {
@@ -73,42 +112,24 @@ private:
         }
     }
 
-    uint8_t extractOneByteLeaderDataBits(uint8_t byte)
+    static uint8_t extractOneByteLeaderDataBits(uint8_t byte)
     {
         return byte & 0x7F;
     }
 
-    uint8_t extractTwoByteLeaderDataBits(uint8_t byte)
+    static uint8_t extractTwoByteLeaderDataBits(uint8_t byte)
     {
         return byte & 0x1F;
     }
 
-    uint8_t extractThreeByteLeaderDataBits(uint8_t byte)
+    static uint8_t extractThreeByteLeaderDataBits(uint8_t byte)
     {
         return byte & 0x0F;
     }
 
-    uint8_t extractFourByteLeaderDataBits(uint8_t byte)
+    static uint8_t extractFourByteLeaderDataBits(uint8_t byte)
     {
         return byte & 0x07;
-    }
-
-    uint8_t extractLeaderByteDataBits(uint8_t byte, LEADER_BYTE_TYPE type)
-    {
-        switch (type)
-        {
-        case LEADER_BYTE_TYPE::ONE_BYTE:
-            return extractOneByteLeaderDataBits(byte);
-        case LEADER_BYTE_TYPE::TWO_BYTE:
-            return extractTwoByteLeaderDataBits(byte);
-        case LEADER_BYTE_TYPE::THREE_BYTE:
-            return extractThreeByteLeaderDataBits(byte);
-        case LEADER_BYTE_TYPE::FOUR_BYTE:
-            return extractFourByteLeaderDataBits(byte);
-        case LEADER_BYTE_TYPE::INVALID:
-            break;
-        }
-        return 0;
     }
 
     int getNumberOfFollowersLeaderByte(LEADER_BYTE_TYPE type)
@@ -128,27 +149,6 @@ private:
         }
         return -1;
     }
-
-public:
-    struct LeaderByteInfo
-    {
-        bool isValid;
-        int numberOfFollowers;
-        uint8_t dataBits;
-    };
-    LeaderByteInfo processLeaderByte(uint8_t byte)
-    {
-        LeaderByteInfo info{false, 0, 0X00};
-        LEADER_BYTE_TYPE type = getLeaderByteType(byte);
-        if (type == LEADER_BYTE_TYPE::INVALID)
-        {
-            return info;
-        }
-        int numberOfFollowers = getNumberOfFollowersLeaderByte(type);
-        uint8_t dataBits = extractLeaderByteDataBits(byte, type);
-        info = {true, numberOfFollowers, dataBits};
-        return info;
-    }
 };
 
 class FollowerByte
@@ -162,16 +162,15 @@ private:
         return (byte & mask) == pattern;
     }
 
-    uint8_t getDataBits(uint8_t byte)
+public:
+    static uint8_t getDataBits(uint8_t byte)
     {
         return byte & 0x3F;
     }
-
-public:
     struct FollowerByteInfo
     {
         bool isValid;
-        uint8_t dataBits;
+        uint8_t rawByte;
     };
     FollowerByteInfo processFollowerByte(uint8_t byte)
     {
@@ -183,9 +182,15 @@ public:
             return info;
         }
         info.isValid = true;
-        info.dataBits = getDataBits(byte);
+        info.rawByte = byte;
         return info;
     }
+};
+
+struct Character
+{
+    LeaderByte::LeaderByteInfo leader{};
+    std::vector<FollowerByte::FollowerByteInfo> followers{};
 };
 
 enum BYTE_TYPE
@@ -194,19 +199,83 @@ enum BYTE_TYPE
     FOLLOWER
 };
 
-BYTE_TYPE currentByteType = BYTE_TYPE::LEADER;
-int totalFollowerBytes = 0;
-
-int generateCharacter(std::vector<uint8_t> characterBytes)
+bool isLeaderFollowersInRange(const Character &character)
 {
-    int sum = 0;
-
-    for (uint8_t character : characterBytes)
+    if (character.leader.type == LeaderByte::LEADER_BYTE_TYPE::TWO_BYTE)
     {
-        sum = (sum << 6) | character;
+        return character.leader.rawByte >= 0xC2;
+    }
+    else if (character.leader.type == LeaderByte::LEADER_BYTE_TYPE::THREE_BYTE)
+    {
+        if (character.followers.size() < 2)
+        {
+            return false;
+        }
+
+        uint8_t leader = character.leader.rawByte;
+        uint8_t second = character.followers[0].rawByte;
+
+        uint8_t secondMin = 0x80;
+        uint8_t secondMax = 0xBF;
+
+        if (leader == 0xE0)
+        {
+            secondMin = 0xA0; // blocks overlong encodings
+        }
+        else if (leader == 0xED)
+        {
+            secondMax = 0x9F; // blocks surrogates
+        }
+
+        return second >= secondMin && second <= secondMax;
+    }
+    else if (character.leader.type == LeaderByte::LEADER_BYTE_TYPE::FOUR_BYTE)
+    {
+        if (character.followers.size() < 3)
+        {
+            return false;
+        }
+
+        uint8_t leader = character.leader.rawByte;
+        uint8_t second = character.followers[0].rawByte;
+
+        if (leader > 0xF4)
+        {
+            return false; // F5-F7 would encode above U+10FFFF
+        }
+
+        uint8_t secondMin = 0x80;
+        uint8_t secondMax = 0xBF;
+
+        if (leader == 0xF0)
+        {
+            secondMin = 0x90; // blocks overlong encodings
+        }
+        else if (leader == 0xF4)
+        {
+            secondMax = 0x8F; // blocks values above U+10FFFF
+        }
+
+        return second >= secondMin && second <= secondMax;
+    }
+    else
+    {
+        return false;
+    }
+}
+
+int generateCharacter(const Character &character)
+{
+    int sum = LeaderByte::extractLeaderByteDataBits(character.leader.rawByte, character.leader.type);
+
+    for (const FollowerByte::FollowerByteInfo &follower : character.followers)
+    {
+        sum = (sum << 6) | FollowerByte::getDataBits(follower.rawByte);
     }
     return sum;
 }
+
+} // namespace
 
 void decode(std::string fileName, std::vector<int> &characters)
 {
@@ -214,79 +283,58 @@ void decode(std::string fileName, std::vector<int> &characters)
 
     if (!file)
     {
-        // throw error here
+        return;
     }
-    char c;
-    std::string currentChar = "";
+
+    BYTE_TYPE currentExpectedByteType = BYTE_TYPE::LEADER;
+    Character currentChar;
     LeaderByte leaderByte;
     FollowerByte followerByte;
-    std::vector<uint8_t> characterBytes;
+    char c;
     while (file.get(c))
     {
         uint8_t byte = c;
-        if (currentByteType == BYTE_TYPE::LEADER)
+        if (currentExpectedByteType == BYTE_TYPE::LEADER)
         {
             LeaderByte::LeaderByteInfo byteInfo = leaderByte.processLeaderByte(byte);
 
             if (!byteInfo.isValid)
             {
-                characters.push_back(0xFFFD);
                 continue;
             }
-
-            std::cout << "Leader byte info -> "
-                      << "isValid: " << std::boolalpha << byteInfo.isValid << std::noboolalpha
-                      << ", numberOfFollowers: " << byteInfo.numberOfFollowers
-                      << ", dataBits: " << static_cast<int>(byteInfo.dataBits)
-                      << '\n';
 
             if (byteInfo.numberOfFollowers == 0)
             {
-                characters.push_back(byteInfo.dataBits);
+                characters.push_back(generateCharacter(Character{byteInfo, {}}));
             }
             else
             {
-                characterBytes.push_back(byteInfo.dataBits);
-                currentByteType = BYTE_TYPE::FOLLOWER;
-                totalFollowerBytes = byteInfo.numberOfFollowers;
+                currentChar.leader = byteInfo;
+                currentExpectedByteType = BYTE_TYPE::FOLLOWER;
             }
         }
-        else if (currentByteType == BYTE_TYPE::FOLLOWER)
+        else
         {
             FollowerByte::FollowerByteInfo byteInfo = followerByte.processFollowerByte(byte);
 
-            std::cout << "Follower byte info -> "
-                      << "isValid: " << std::boolalpha << byteInfo.isValid << std::noboolalpha
-                      << ", dataBits: " << static_cast<int>(byteInfo.dataBits)
-                      << '\n';
-
             if (!byteInfo.isValid)
             {
-                characters.push_back(0xFFFD);
-                characterBytes = {};
-                currentByteType = BYTE_TYPE::LEADER;
-                totalFollowerBytes = 0;
+                currentExpectedByteType = BYTE_TYPE::LEADER;
+                currentChar = {};
                 continue;
             }
 
-            characterBytes.push_back(byteInfo.dataBits);
-            totalFollowerBytes--;
+            currentChar.followers.push_back(byteInfo);
 
-            if (totalFollowerBytes == 0)
+            if (static_cast<int>(currentChar.followers.size()) == currentChar.leader.numberOfFollowers)
             {
-                int character = generateCharacter(characterBytes);
-                characters.push_back(character);
-                currentByteType = BYTE_TYPE::LEADER;
-                characterBytes = {};
+                if (isLeaderFollowersInRange(currentChar))
+                {
+                    characters.push_back(generateCharacter(currentChar));
+                }
+                currentExpectedByteType = BYTE_TYPE::LEADER;
+                currentChar = {};
             }
         }
-    }
-
-    if (currentByteType == BYTE_TYPE::FOLLOWER)
-    {
-        characters.push_back(0xFFFD); // incomplete character at end of input
-        characterBytes = {};
-        currentByteType = BYTE_TYPE::LEADER;
-        totalFollowerBytes = 0;
     }
 }
