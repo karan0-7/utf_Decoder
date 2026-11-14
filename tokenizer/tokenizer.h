@@ -1,6 +1,8 @@
 #pragma once
 
 #include <string>
+#include <variant>
+#include <vector>
 
 enum class tokenType
 {
@@ -33,3 +35,9 @@ struct BooleanToken
     tokenType type;
     bool value;
 };
+
+using Token = std::variant<StructuralToken, StringToken, NumberToken, BooleanToken>;
+
+void tokenize(const std::vector<int> &characters);
+const std::vector<Token> &getTokens();
+void logTokens();

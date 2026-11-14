@@ -1,3 +1,15 @@
 {
-    "symbol":"₳"
+    "name": "karan",
+    "age": 279,
+    "students": [
+        12,
+        "check",
+        1,
+        2,
+        3,
+        [
+            1,
+            2
+        ]
+    ]
 }
